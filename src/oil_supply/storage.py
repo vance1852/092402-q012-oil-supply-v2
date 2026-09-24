@@ -171,6 +171,101 @@ CREATE TABLE IF NOT EXISTS scenario_runs (
     UNIQUE(scenario_id, as_of_date, input_sha256)
 );
 
+CREATE TABLE IF NOT EXISTS forecast_versions (
+    version_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region TEXT NOT NULL,
+    product TEXT NOT NULL,
+    business_day TEXT NOT NULL,
+    quantity_barrels TEXT NOT NULL,
+    price_assumption_usd TEXT NOT NULL,
+    price_elasticity TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','approved','superseded','withdrawn')),
+    revision INTEGER NOT NULL DEFAULT 1,
+    content_sha256 TEXT NOT NULL,
+    supersedes_version_id INTEGER REFERENCES forecast_versions(version_id),
+    created_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    created_at TEXT NOT NULL,
+    approved_by TEXT REFERENCES supply_users(user_id),
+    approved_at TEXT,
+    effective_from TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_forecast_single_draft
+ON forecast_versions(region, product, business_day) WHERE state='draft';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_forecast_single_approved
+ON forecast_versions(region, product, business_day) WHERE state='approved';
+
+CREATE INDEX IF NOT EXISTS idx_forecast_key
+ON forecast_versions(region, product, business_day, version_id);
+
+CREATE TABLE IF NOT EXISTS forecast_cutoffs (
+    cutoff_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region TEXT NOT NULL,
+    product TEXT NOT NULL,
+    business_day TEXT NOT NULL,
+    resolved_version_id INTEGER NOT NULL REFERENCES forecast_versions(version_id),
+    resolved_at TEXT NOT NULL,
+    version_summary_json TEXT NOT NULL,
+    summary_sha256 TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    UNIQUE(region, product, business_day)
+);
+
+CREATE TABLE IF NOT EXISTS allocation_forecast_links (
+    allocation_id INTEGER NOT NULL REFERENCES allocation_runs(allocation_id),
+    forecast_version_id INTEGER NOT NULL REFERENCES forecast_versions(version_id),
+    version_summary_json TEXT NOT NULL,
+    summary_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(allocation_id, forecast_version_id)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_actuals (
+    actual_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region TEXT NOT NULL,
+    product TEXT NOT NULL,
+    business_day TEXT NOT NULL,
+    delivered_barrels TEXT NOT NULL,
+    price_usd TEXT NOT NULL,
+    source TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    recorded_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    recorded_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_actuals_key
+ON forecast_actuals(region, product, business_day, actual_id);
+
+CREATE TABLE IF NOT EXISTS deviation_analyses (
+    analysis_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region TEXT NOT NULL,
+    product TEXT NOT NULL,
+    business_day TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    forecast_version_id INTEGER NOT NULL REFERENCES forecast_versions(version_id),
+    version_source TEXT NOT NULL CHECK(version_source IN ('cutoff','resolved_at_close')),
+    forecast_quantity TEXT NOT NULL,
+    actual_quantity TEXT NOT NULL,
+    forecast_price TEXT NOT NULL,
+    actual_price TEXT NOT NULL,
+    available_supply TEXT NOT NULL,
+    price_effect TEXT NOT NULL,
+    supply_effect TEXT NOT NULL,
+    unexplained TEXT NOT NULL,
+    total_deviation TEXT NOT NULL,
+    quantity_closed INTEGER NOT NULL CHECK(quantity_closed IN (0,1)),
+    trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('initial_close','late_actual')),
+    supersedes_analysis_id INTEGER REFERENCES deviation_analyses(analysis_id),
+    created_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    created_at TEXT NOT NULL,
+    UNIQUE(region, product, business_day, revision)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_single_close
+ON deviation_analyses(region, product, business_day) WHERE trigger_kind='initial_close';
+
 CREATE TABLE IF NOT EXISTS supply_idempotency (
     scope TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,

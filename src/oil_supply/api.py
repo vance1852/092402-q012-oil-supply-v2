@@ -74,7 +74,29 @@ class JsonApplication:
             if method == "POST" and path == "/nominations":
                 return Response(201, self.service.submit_nomination(actor, payload))
             if method == "POST" and len(parts) == 3 and parts[0] == "routes" and parts[2] == "allocate":
-                return Response(200, self.service.allocate(actor, parts[1], payload["service_date"]))
+                return Response(200, self.service.allocate(actor, parts[1], payload["service_date"], payload.get("forecast_version_id")))
+            if method == "GET" and len(parts) == 3 and parts[0] == "allocations" and parts[2] == "forecast":
+                return Response(200, self.service.allocation_forecast_summary(actor, int(parts[1])))
+            if method == "POST" and path == "/forecasts":
+                return Response(201, self.service.submit_forecast(actor, payload))
+            if method == "GET" and path == "/forecasts":
+                return Response(200, self.service.list_forecasts(actor, query.get("region", [None])[0], query.get("product", [None])[0], query.get("business_day", [None])[0]))
+            if method == "GET" and path == "/forecasts/compare":
+                return Response(200, self.service.compare_forecasts(actor, int(query["a"][0]), int(query["b"][0])))
+            if method == "POST" and len(parts) == 3 and parts[0] == "forecasts" and parts[2] == "approve":
+                return Response(200, self.service.approve_forecast(actor, int(parts[1]), payload.get("effective_from")))
+            if method == "POST" and len(parts) == 3 and parts[0] == "forecasts" and parts[2] == "withdraw":
+                return Response(200, self.service.withdraw_forecast(actor, int(parts[1])))
+            if method == "POST" and path == "/forecast-cutoffs":
+                return Response(201, self.service.run_cutoff(actor, payload["region"], payload["product"], payload["business_day"]))
+            if method == "GET" and path == "/forecast-cutoffs":
+                return Response(200, self.service.get_cutoff(actor, query["region"][0], query["product"][0], query["business_day"][0]))
+            if method == "POST" and path == "/forecast-actuals":
+                return Response(201, self.service.record_actual(actor, payload))
+            if method == "POST" and path == "/forecast-closes":
+                return Response(200, self.service.close_forecast_day(actor, payload["region"], payload["product"], payload["business_day"], payload["available_supply_barrels"]))
+            if method == "GET" and path == "/forecast-analyses":
+                return Response(200, self.service.list_analyses(actor, query["region"][0], query["product"][0], query["business_day"][0]))
             if method == "POST" and path == "/transfers":
                 return Response(201, self.service.dispatch_transfer(actor, payload["transfer_id"], payload["nomination_id"], payload["lot_id"], int(payload["expected_revision"])))
             if method == "POST" and path == "/scenarios":

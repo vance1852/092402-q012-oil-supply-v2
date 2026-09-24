@@ -223,6 +223,72 @@ class NominationRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ForecastDraft:
+    region: str
+    product: str
+    business_day: str
+    quantity_barrels: Decimal
+    price_assumption_usd: Decimal
+    price_elasticity: Decimal
+    note: str
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "ForecastDraft":
+        product = required_text(raw.get("product"), "product", 32)
+        if product not in PRODUCTS:
+            raise ValidationFailed("product 不是受支持的油品")
+        note = raw.get("note", "")
+        if not isinstance(note, str) or len(note.strip()) > 256:
+            raise ValidationFailed("note 不能超过 256 个字符")
+        return cls(
+            region=identifier(raw.get("region"), "region"),
+            product=product,
+            business_day=date_text(raw.get("business_day"), "business_day"),
+            quantity_barrels=decimal_value(
+                raw.get("quantity_barrels"), "quantity_barrels", minimum=Decimal("0.001")
+            ),
+            price_assumption_usd=decimal_value(
+                raw.get("price_assumption_usd"), "price_assumption_usd", minimum=Decimal("0.01")
+            ),
+            price_elasticity=decimal_value(
+                raw.get("price_elasticity", 0),
+                "price_elasticity",
+                minimum=Decimal("-10"),
+                maximum=Decimal("10"),
+            ),
+            note=note.strip(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastActual:
+    region: str
+    product: str
+    business_day: str
+    delivered_barrels: Decimal
+    price_usd: Decimal
+    source: str
+    idempotency_key: str
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "ForecastActual":
+        product = required_text(raw.get("product"), "product", 32)
+        if product not in PRODUCTS:
+            raise ValidationFailed("product 不是受支持的油品")
+        return cls(
+            region=identifier(raw.get("region"), "region"),
+            product=product,
+            business_day=date_text(raw.get("business_day"), "business_day"),
+            delivered_barrels=decimal_value(
+                raw.get("delivered_barrels"), "delivered_barrels", minimum=Decimal("0.001")
+            ),
+            price_usd=decimal_value(raw.get("price_usd"), "price_usd", minimum=Decimal("0.01")),
+            source=required_text(raw.get("source"), "source", 64),
+            idempotency_key=identifier(raw.get("idempotency_key"), "idempotency_key"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SupplyScenario:
     scenario_id: str
     name: str
