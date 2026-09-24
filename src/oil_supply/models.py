@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from .clock import parse_utc
 from .errors import ValidationFailed
+from .planning import decimal_text, quantize_money, quantize_volume
 
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{1,63}$")
@@ -259,4 +260,103 @@ class SupplyScenario:
             ),
             route_capacity_changes=parsed_routes,
             demand_changes=parsed_demand,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastKey:
+    """区域 × 油品 × 营业日的预测键。"""
+
+    region_id: str
+    product: str
+    business_date: str
+
+    @classmethod
+    def from_values(cls, region_id: object, product: object, business_date: object) -> "ForecastKey":
+        product_text = required_text(product, "product", 32)
+        if product_text not in PRODUCTS:
+            raise ValidationFailed("product 不是受支持的油品")
+        return cls(
+            region_id=identifier(region_id, "region_id"),
+            product=product_text,
+            business_date=date_text(business_date, "business_date"),
+        )
+
+    def as_tuple(self) -> tuple[str, str, str]:
+        return (self.region_id, self.product, self.business_date)
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastLine:
+    line_key: str
+    quantity_barrels: Decimal
+    expected_price_usd: Decimal | None
+    price_elasticity: Decimal
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any], index: int) -> "ForecastLine":
+        if not isinstance(raw, Mapping):
+            raise ValidationFailed(f"lines[{index}] 必须是对象")
+        expected = raw.get("expected_price_usd")
+        return cls(
+            line_key=identifier(raw.get("line_key"), f"lines[{index}].line_key"),
+            quantity_barrels=decimal_value(
+                raw.get("quantity_barrels"), f"lines[{index}].quantity_barrels", minimum=Decimal("0")
+            ),
+            expected_price_usd=None
+            if expected is None
+            else decimal_value(expected, f"lines[{index}].expected_price_usd", minimum=Decimal("0.01")),
+            price_elasticity=decimal_value(
+                raw.get("price_elasticity", 0),
+                f"lines[{index}].price_elasticity",
+                minimum=Decimal("-20"),
+                maximum=Decimal("20"),
+            ),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "line_key": self.line_key,
+            "quantity_barrels": decimal_text(quantize_volume(self.quantity_barrels)),
+            "expected_price_usd": None
+            if self.expected_price_usd is None
+            else decimal_text(quantize_money(self.expected_price_usd)),
+            "price_elasticity": decimal_text(self.price_elasticity),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastDraftSubmission:
+    key: ForecastKey
+    lines: tuple[ForecastLine, ...]
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "ForecastDraftSubmission":
+        key = ForecastKey.from_values(raw.get("region_id"), raw.get("product"), raw.get("business_date"))
+        lines_raw = raw.get("lines")
+        if not isinstance(lines_raw, list) or not lines_raw:
+            raise ValidationFailed("lines 必须是非空数组")
+        lines = tuple(ForecastLine.from_dict(item, index) for index, item in enumerate(lines_raw))
+        keys = [line.line_key for line in lines]
+        if len(set(keys)) != len(keys):
+            raise ValidationFailed("lines 中存在重复 line_key")
+        return cls(key=key, lines=lines)
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastActual:
+    key: ForecastKey
+    quantity_barrels: Decimal
+    avg_price_usd: Decimal
+    source: str
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "ForecastActual":
+        return cls(
+            key=ForecastKey.from_values(raw.get("region_id"), raw.get("product"), raw.get("business_date")),
+            quantity_barrels=decimal_value(
+                raw.get("quantity_barrels"), "quantity_barrels", minimum=Decimal("0.001")
+            ),
+            avg_price_usd=decimal_value(raw.get("avg_price_usd"), "avg_price_usd", minimum=Decimal("0.01")),
+            source=required_text(raw.get("source"), "source", 64),
         )

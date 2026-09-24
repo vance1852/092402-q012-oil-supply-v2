@@ -16,7 +16,7 @@ def run(workspace: Path) -> dict[str, object]:
     connection = sqlite3.connect(":memory:", isolation_level=None)
     connection.row_factory = sqlite3.Row
     service = SupplyService(connection, FrozenClock(datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc)))
-    for user_id, role in (("plan", "planner"), ("dispatch", "dispatcher"), ("risk", "risk"), ("audit", "auditor")):
+    for user_id, role in (("plan", "planner"), ("sales", "sales"), ("dispatch", "dispatcher"), ("risk", "risk"), ("audit", "auditor")):
         service.create_user(user_id, user_id, role)
     for index, close in enumerate(("108", "105", "102", "100", "98", "96"), start=18):
         service.record_quote("plan", {"price_index": "BRENT", "trade_date": f"2026-09-{index}", "close_usd": close, "source_revision": f"rev-{index}", "observed_at": f"2026-09-{index}T21:00:00Z"})
@@ -30,7 +30,27 @@ def run(workspace: Path) -> dict[str, object]:
     service.create_scenario("plan", {"scenario_id": "pipeline-restart", "name": "关键管道恢复与需求回落", "price_index_drop_percent": "9", "route_capacity_changes": {"pipe-a-b": "20"}, "demand_changes": {"field-a:crude": "-5"}})
     service.approve_scenario("risk", "pipeline-restart", 1)
     scenario = service.run_scenario("plan", "pipeline-restart", "2026-09-23")
-    result = {"status": "ok", "price": service.price_summary("BRENT"), "allocation_id": allocation["allocation_id"], "transfer": transfer, "scenario_run_id": scenario["run_id"], "audit": service.audit_chain("audit"), "workspace": workspace.name}
+    forecast_key = {"region_id": "east", "product": "gasoline-92", "business_date": "2026-09-25"}
+    service.submit_forecast_draft("sales", {**forecast_key, "lines": [{"line_key": "retail", "quantity_barrels": "1200", "expected_price_usd": "95.5", "price_elasticity": "-0.4"}]})
+    merged = service.submit_forecast_draft("plan", {**forecast_key, "lines": [{"line_key": "wholesale", "quantity_barrels": "800", "expected_price_usd": "95", "price_elasticity": "-0.3"}]})
+    first_version = service.approve_forecast("risk", merged["version_id"], merged["revision"])
+    rolling = service.submit_forecast_draft("sales", {**forecast_key, "lines": [{"line_key": "retail", "quantity_barrels": "1100", "expected_price_usd": "95.5", "price_elasticity": "-0.4"}]})
+    second_version = service.approve_forecast("risk", rolling["version_id"], rolling["revision"])
+    cutoff = service.run_forecast_cutoff("dispatch", "east", "gasoline-92", "2026-09-25", "1900")
+    service.record_forecast_actual("dispatch", {**forecast_key, "quantity_barrels": "1150", "avg_price_usd": "97.25", "source": "dn-1"})
+    service.record_forecast_actual("dispatch", {**forecast_key, "quantity_barrels": "700", "avg_price_usd": "97", "source": "dn-2"})
+    variance = service.analyze_forecast_variance("dispatch", "east", "gasoline-92", "2026-09-25")
+    late = service.record_forecast_actual("dispatch", {**forecast_key, "quantity_barrels": "30", "avg_price_usd": "97.5", "source": "dn-3"})
+    comparison = service.compare_forecasts("sales", first_version["version_id"], second_version["version_id"])
+    forecast = {
+        "cutoff_id": cutoff["cutoff_id"],
+        "resolved_version_no": cutoff["version_no"],
+        "deviation_barrels": variance["deviation_barrels"],
+        "quantity_closed": variance["quantity_closed"],
+        "successor_analysis_seq": late["successor_analysis"]["analysis_seq"],
+        "version_delta_barrels": comparison["total_delta_barrels"],
+    }
+    result = {"status": "ok", "price": service.price_summary("BRENT"), "allocation_id": allocation["allocation_id"], "transfer": transfer, "scenario_run_id": scenario["run_id"], "forecast": forecast, "audit": service.audit_chain("audit"), "workspace": workspace.name}
     connection.close()
     return result
 

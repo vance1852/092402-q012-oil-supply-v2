@@ -14,7 +14,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS supply_users (
     user_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('planner','dispatcher','risk','auditor')),
+    role TEXT NOT NULL CHECK(role IN ('planner','sales','dispatcher','risk','auditor')),
     active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
     created_at TEXT NOT NULL
 );
@@ -178,6 +178,71 @@ CREATE TABLE IF NOT EXISTS supply_idempotency (
     response_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY(scope, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_versions (
+    version_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region_id TEXT NOT NULL,
+    product TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    version_no INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','approved','superseded')),
+    lines_json TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    created_at TEXT NOT NULL,
+    approved_by TEXT REFERENCES supply_users(user_id),
+    approved_at TEXT,
+    effective_at TEXT,
+    supersedes_version_id INTEGER REFERENCES forecast_versions(version_id),
+    UNIQUE(region_id, product, business_date, version_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forecast_versions_effective
+ON forecast_versions(region_id, product, business_date, state, effective_at);
+
+CREATE TABLE IF NOT EXISTS forecast_cutoff_runs (
+    cutoff_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region_id TEXT NOT NULL,
+    product TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    version_id INTEGER NOT NULL REFERENCES forecast_versions(version_id),
+    supply_cap_barrels TEXT NOT NULL,
+    resolved_at TEXT NOT NULL,
+    input_summary_json TEXT NOT NULL,
+    input_sha256 TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    created_at TEXT NOT NULL,
+    UNIQUE(region_id, product, business_date)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_actuals (
+    actual_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region_id TEXT NOT NULL,
+    product TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    quantity_barrels TEXT NOT NULL,
+    avg_price_usd TEXT NOT NULL,
+    source TEXT NOT NULL,
+    recorded_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    recorded_at TEXT NOT NULL,
+    UNIQUE(region_id, product, business_date, source)
+);
+
+CREATE TABLE IF NOT EXISTS forecast_variance_analyses (
+    analysis_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region_id TEXT NOT NULL,
+    product TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    analysis_seq INTEGER NOT NULL,
+    cutoff_id INTEGER NOT NULL REFERENCES forecast_cutoff_runs(cutoff_id),
+    supersedes_analysis_id INTEGER REFERENCES forecast_variance_analyses(analysis_id),
+    input_sha256 TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    created_at TEXT NOT NULL,
+    UNIQUE(region_id, product, business_date, analysis_seq)
 );
 
 CREATE TABLE IF NOT EXISTS supply_audit_events (

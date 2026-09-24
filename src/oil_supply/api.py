@@ -83,6 +83,26 @@ class JsonApplication:
                 return Response(200, self.service.approve_scenario(actor, parts[1], int(payload["expected_revision"])))
             if method == "POST" and len(parts) == 3 and parts[0] == "scenarios" and parts[2] == "run":
                 return Response(200, self.service.run_scenario(actor, parts[1], payload["as_of_date"]))
+            if method == "POST" and path == "/forecasts/drafts":
+                return Response(201, self.service.submit_forecast_draft(actor, payload))
+            if method == "GET" and len(parts) == 3 and parts[:2] == ["forecasts", "versions"]:
+                return Response(200, self.service.forecast_version(actor, int(parts[2])))
+            if method == "POST" and len(parts) == 4 and parts[:2] == ["forecasts", "versions"] and parts[3] == "approve":
+                return Response(200, self.service.approve_forecast(actor, int(parts[2]), int(payload["expected_revision"]), payload.get("effective_at")))
+            if method == "GET" and path == "/forecasts/timeline":
+                return Response(200, self.service.forecast_timeline(actor, query.get("region_id", [""])[0], query.get("product", [""])[0], query.get("business_date", [""])[0]))
+            if method == "GET" and path == "/forecasts/compare":
+                return Response(200, self.service.compare_forecasts(actor, int(query["a"][0]), int(query["b"][0])))
+            if method == "POST" and path == "/forecasts/cutoffs":
+                return Response(201, self.service.run_forecast_cutoff(actor, payload["region_id"], payload["product"], payload["business_date"], payload["supply_cap_barrels"]))
+            if method == "GET" and path == "/forecasts/cutoffs":
+                return Response(200, self.service.forecast_cutoff(actor, query.get("region_id", [""])[0], query.get("product", [""])[0], query.get("business_date", [""])[0]))
+            if method == "POST" and path == "/forecasts/actuals":
+                return Response(201, self.service.record_forecast_actual(actor, payload))
+            if method == "POST" and path == "/forecasts/variance":
+                return Response(200, self.service.analyze_forecast_variance(actor, payload["region_id"], payload["product"], payload["business_date"]))
+            if method == "GET" and path == "/forecasts/variance":
+                return Response(200, self.service.forecast_variance_history(actor, query.get("region_id", [""])[0], query.get("product", [""])[0], query.get("business_date", [""])[0]))
             if method == "GET" and path == "/audit/chain":
                 return Response(200, self.service.audit_chain(actor))
             return Response(404, {"error": {"code": "route_not_found", "message": "接口不存在"}})

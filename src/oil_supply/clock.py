@@ -30,6 +30,13 @@ def utc_text(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def utc_text_fixed(value: datetime) -> str:
+    """固定宽度 UTC 文本，字符串排序与时间排序一致，适合版本生效时间比较。"""
+    if value.tzinfo is None:
+        raise ValueError("时间必须带时区")
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
 def parse_utc(value: str, field: str = "时间") -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))

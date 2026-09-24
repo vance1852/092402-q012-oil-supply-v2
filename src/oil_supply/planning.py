@@ -188,8 +188,110 @@ def reconcile_inventory(
     }
 
 
-def scenario_projection(
+def merge_forecast_lines(
+    existing: Iterable[Mapping[str, object]],
+    submitted: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """按 line_key 确定性合并草稿行，后提交的行覆盖同键行，输出按 line_key 排序。"""
+    merged: dict[str, dict[str, object]] = {}
+    for line in existing:
+        merged[str(line["line_key"])] = dict(line)
+    for line in submitted:
+        merged[str(line["line_key"])] = dict(line)
+    return [merged[key] for key in sorted(merged)]
+
+
+def compare_forecast_lines(
+    lines_a: Iterable[Mapping[str, object]],
+    lines_b: Iterable[Mapping[str, object]],
+) -> dict[str, object]:
+    """逐行比较两个版本的预测行，输出每行增减和总量差。"""
+    by_a = {str(line["line_key"]): line for line in lines_a}
+    by_b = {str(line["line_key"]): line for line in lines_b}
+    rows: list[dict[str, object]] = []
+    total_a = ZERO
+    total_b = ZERO
+    for key in sorted(set(by_a) | set(by_b)):
+        line_a = by_a.get(key)
+        line_b = by_b.get(key)
+        quantity_a = ZERO if line_a is None else Decimal(str(line_a["quantity_barrels"]))
+        quantity_b = ZERO if line_b is None else Decimal(str(line_b["quantity_barrels"]))
+        total_a += quantity_a
+        total_b += quantity_b
+        if line_a is None:
+            change = "added"
+        elif line_b is None:
+            change = "removed"
+        elif quantity_b > quantity_a:
+            change = "increased"
+        elif quantity_b < quantity_a:
+            change = "decreased"
+        else:
+            change = "unchanged"
+        rows.append({
+            "line_key": key,
+            "a_quantity_barrels": None if line_a is None else decimal_text(quantize_volume(quantity_a)),
+            "b_quantity_barrels": None if line_b is None else decimal_text(quantize_volume(quantity_b)),
+            "delta_barrels": decimal_text(quantize_volume(quantity_b - quantity_a)),
+            "change": change,
+        })
+    return {
+        "lines": rows,
+        "total_a_barrels": decimal_text(quantize_volume(total_a)),
+        "total_b_barrels": decimal_text(quantize_volume(total_b)),
+        "total_delta_barrels": decimal_text(quantize_volume(total_b - total_a)),
+    }
+
+
+def decompose_variance(
     *,
+    forecast_lines: Iterable[Mapping[str, object]],
+    actual_quantity: Decimal,
+    actual_avg_price: Decimal,
+    supply_cap: Decimal,
+) -> dict[str, object]:
+    """把预测与实绩的偏差在数量闭合下分解为价格变化、供应受限和未解释三部分。
+
+    价格分量按各预测行的价格弹性计算；供应受限分量是供应上限相对价格调整后
+    需求的缺口（只可能小于等于零）；未解释分量是闭合残差，保证三项之和严格
+    等于总偏差。
+    """
+    if actual_quantity < ZERO or supply_cap < ZERO or actual_avg_price <= ZERO:
+        raise ValueError("实绩数量和供应上限不能为负，实绩均价必须为正")
+    forecast_total = ZERO
+    price_component = ZERO
+    for line in forecast_lines:
+        quantity = Decimal(str(line["quantity_barrels"]))
+        forecast_total += quantity
+        expected = line.get("expected_price_usd")
+        elasticity = Decimal(str(line.get("price_elasticity") or "0"))
+        if expected is None:
+            continue
+        expected_price = Decimal(str(expected))
+        if expected_price <= ZERO:
+            raise ValueError("预测行期望价格必须为正数")
+        price_component += quantity * elasticity * (actual_avg_price - expected_price) / expected_price
+    expected_unconstrained = max(ZERO, forecast_total + price_component)
+    supply_component = min(expected_unconstrained, supply_cap) - expected_unconstrained
+    deviation = actual_quantity - forecast_total
+    deviation_q = quantize_volume(deviation)
+    price_q = quantize_volume(price_component)
+    supply_q = quantize_volume(supply_component)
+    unexplained_q = deviation_q - price_q - supply_q
+    return {
+        "forecast_quantity_barrels": decimal_text(quantize_volume(forecast_total)),
+        "actual_quantity_barrels": decimal_text(quantize_volume(actual_quantity)),
+        "actual_avg_price_usd": decimal_text(quantize_money(actual_avg_price)),
+        "supply_cap_barrels": decimal_text(quantize_volume(supply_cap)),
+        "deviation_barrels": decimal_text(deviation_q),
+        "price_component_barrels": decimal_text(price_q),
+        "supply_constrained_component_barrels": decimal_text(supply_q),
+        "unexplained_component_barrels": decimal_text(unexplained_q),
+        "quantity_closed": deviation_q == price_q + supply_q + unexplained_q,
+    }
+
+
+def scenario_projection(    *,
     current_price: Decimal,
     price_index_drop_percent: Decimal,
     routes: Iterable[Mapping[str, object]],
